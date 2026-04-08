@@ -30,6 +30,11 @@ export class AdminController {
     private readonly versionsService: VersionsService,
   ) {}
 
+  @Get()
+  redirectRoot(@Res() response: Response): void {
+    response.redirect('/admin');
+  }
+
   @Get('admin')
   renderAdmin(@Res() response: Response): void {
     response.type('html').send(this.renderPage());
