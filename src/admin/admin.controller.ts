@@ -434,22 +434,23 @@ export class AdminController {
               <label>Project<select name="project_id" id="projectSelect" required></select></label>
               <div class="split">
                 <label>Platform
-                  <select name="platform" required>
+                  <select name="platform" id="platformSelect" required>
                     <option value="android">Android</option>
                     <option value="windows">Windows</option>
                   </select>
                 </label>
-                <label>Version<input name="version" placeholder="1.0.3" required /></label>
+                <label>Version<input name="version" id="versionInput" placeholder="1.0.3" required /></label>
               </div>
               <div class="split">
-                <label>Build Number<input type="number" min="1" name="build_number" required /></label>
-                <label>Min Supported Build<input type="number" min="0" name="min_supported_build" value="0" /></label>
+                <label>Build Number<input type="number" min="1" id="buildNumberInput" name="build_number" required /></label>
+                <label>Min Supported Build<input type="number" min="0" id="minSupportedBuildInput" name="min_supported_build" value="0" /></label>
               </div>
+              <div class="muted" id="uploadAutofillHint">Select project, platform and file to auto-suggest version fields.</div>
               <label>Release Notes<textarea name="release_notes" placeholder="Summary of fixes and features"></textarea></label>
               <div class="split">
-                <label><span>File</span><input type="file" name="file" required /></label>
+                <label><span>File</span><input type="file" id="releaseFileInput" name="file" required /></label>
                 <div class="form-grid">
-                  <label><span>Required Update</span><select name="is_required"><option value="false">No</option><option value="true">Yes</option></select></label>
+                  <label><span>Required Update</span><select name="is_required" id="isRequiredSelect"><option value="false">No</option><option value="true">Yes</option></select></label>
                   <label><span>Activate Immediately</span><select name="is_active"><option value="true">Yes</option><option value="false">No</option></select></label>
                 </div>
               </div>
@@ -486,9 +487,17 @@ export class AdminController {
       const dashboard = document.getElementById('dashboard');
       const logoutButton = document.getElementById('logoutButton');
       const projectSelect = document.getElementById('projectSelect');
+      const platformSelect = document.getElementById('platformSelect');
       const projectFilter = document.getElementById('projectFilter');
       const projectList = document.getElementById('projectList');
       const versionList = document.getElementById('versionList');
+      const uploadForm = document.getElementById('uploadForm');
+      const versionInput = document.getElementById('versionInput');
+      const buildNumberInput = document.getElementById('buildNumberInput');
+      const minSupportedBuildInput = document.getElementById('minSupportedBuildInput');
+      const releaseFileInput = document.getElementById('releaseFileInput');
+      const isRequiredSelect = document.getElementById('isRequiredSelect');
+      const uploadAutofillHint = document.getElementById('uploadAutofillHint');
       const uploadProgress = document.getElementById('uploadProgress');
       const uploadProgressTrack = document.getElementById('uploadProgressTrack');
       const uploadProgressBar = document.getElementById('uploadProgressBar');
@@ -498,6 +507,13 @@ export class AdminController {
       const uploadSpeed = document.getElementById('uploadSpeed');
       const uploadEta = document.getElementById('uploadEta');
       const directUploadEnabled = ${directUploadEnabled ? 'true' : 'false'};
+      const latestVersionsCache = new Map();
+
+      [versionInput, buildNumberInput, minSupportedBuildInput].forEach((input) => {
+        input.addEventListener('input', () => {
+          input.dataset.userEdited = 'true';
+        });
+      });
 
       function getToken() {
         return localStorage.getItem(tokenKey);
@@ -507,6 +523,153 @@ export class AdminController {
         const element = document.getElementById(id);
         element.textContent = message || '';
         element.className = 'status' + (type ? ' ' + type : '');
+      }
+
+      function setAutofillHint(message) {
+        uploadAutofillHint.textContent = message;
+      }
+
+      function markAutoFilled(input, value) {
+        input.value = String(value);
+        input.dataset.userEdited = 'false';
+        input.dataset.autofilled = 'true';
+      }
+
+      function maybeAutoFillInput(input, value) {
+        if (value == null || value === '') {
+          return false;
+        }
+
+        if (input.dataset.userEdited === 'true' && input.value.trim() !== '') {
+          return false;
+        }
+
+        markAutoFilled(input, value);
+        return true;
+      }
+
+      function incrementSemanticVersion(version) {
+        const trimmed = String(version || '').trim();
+        const match = trimmed.match(/^(\d+)\.(\d+)\.(\d+)(.*)$/);
+
+        if (!match) {
+          return trimmed || '1.0.0';
+        }
+
+        const major = Number(match[1]);
+        const minor = Number(match[2]);
+        const patch = Number(match[3]);
+        const suffix = match[4] || '';
+
+        return major + '.' + minor + '.' + (patch + 1) + suffix;
+      }
+
+      function inferMetadataFromFileName(fileName) {
+        const name = String(fileName || '').trim();
+        if (!name) {
+          return {};
+        }
+
+        const plusMatch = name.match(/(\d+\.\d+\.\d+(?:[-._][0-9A-Za-z-]+)?)\+(\d+)/i);
+        if (plusMatch) {
+          return {
+            version: plusMatch[1].replace(/_/g, '.'),
+            buildNumber: Number(plusMatch[2]),
+          };
+        }
+
+        const versionMatch = name.match(/(\d+\.\d+\.\d+(?:[-._][0-9A-Za-z-]+)?)/i);
+        const buildMatch = name.match(/(?:build|compil(?:acion|ation)?|versioncode|code|vc|b)[-_ ]?(\d{1,9})/i);
+
+        return {
+          version: versionMatch ? versionMatch[1].replace(/_/g, '.') : undefined,
+          buildNumber: buildMatch ? Number(buildMatch[1]) : undefined,
+        };
+      }
+
+      async function getLatestVersionForSelection(projectId, platform) {
+        if (!projectId || !platform) {
+          return null;
+        }
+
+        const cacheKey = projectId + ':' + platform;
+        if (latestVersionsCache.has(cacheKey)) {
+          return latestVersionsCache.get(cacheKey);
+        }
+
+        const query = '?project_id=' + encodeURIComponent(projectId) + '&platform=' + encodeURIComponent(platform);
+        const data = await api('/api/v1/admin/versions' + query);
+        const latest = Array.isArray(data.items) && data.items.length > 0 ? data.items[0] : null;
+        latestVersionsCache.set(cacheKey, latest);
+        return latest;
+      }
+
+      function invalidateVersionCaches(projectId) {
+        if (!projectId) {
+          latestVersionsCache.clear();
+          return;
+        }
+
+        Array.from(latestVersionsCache.keys()).forEach((key) => {
+          if (key.startsWith(projectId + ':')) {
+            latestVersionsCache.delete(key);
+          }
+        });
+      }
+
+      async function autofillUploadFields() {
+        const projectId = projectSelect.value;
+        const platform = platformSelect.value;
+        const selectedFile = releaseFileInput.files && releaseFileInput.files[0] ? releaseFileInput.files[0] : null;
+        const inferred = selectedFile ? inferMetadataFromFileName(selectedFile.name) : {};
+
+        if (!projectId || !platform) {
+          setAutofillHint('Select project and platform to auto-suggest version fields.');
+          return;
+        }
+
+        const latest = await getLatestVersionForSelection(projectId, platform);
+
+        const suggestedBuild = inferred.buildNumber || (latest ? Number(latest.build_number) + 1 : 1);
+        const suggestedVersion = inferred.version || (latest ? incrementSemanticVersion(latest.version) : '1.0.0');
+        const suggestedMinBuild = isRequiredSelect.value === 'true' ? suggestedBuild : 0;
+
+        const versionFilled = maybeAutoFillInput(versionInput, suggestedVersion);
+        const buildFilled = maybeAutoFillInput(buildNumberInput, suggestedBuild);
+        const minFilled = maybeAutoFillInput(minSupportedBuildInput, suggestedMinBuild);
+
+        if (selectedFile && (inferred.version || inferred.buildNumber)) {
+          const parts = [];
+          if (inferred.version) {
+            parts.push('version ' + inferred.version);
+          }
+          if (inferred.buildNumber) {
+            parts.push('build ' + inferred.buildNumber);
+          }
+          setAutofillHint('Auto-detected ' + parts.join(' and ') + ' from file name.');
+          return;
+        }
+
+        if (latest) {
+          const actions = [];
+          if (versionFilled) {
+            actions.push('version ' + suggestedVersion);
+          }
+          if (buildFilled) {
+            actions.push('build ' + suggestedBuild);
+          }
+          if (minFilled) {
+            actions.push('min build ' + suggestedMinBuild);
+          }
+          setAutofillHint(
+            actions.length > 0
+              ? 'Suggested next release from latest ' + latest.version + ' (' + latest.build_number + '): ' + actions.join(', ') + '.'
+              : 'Latest release found: ' + latest.version + ' (' + latest.build_number + '). Keeping your manual values.',
+          );
+          return;
+        }
+
+        setAutofillHint('No previous release found for this platform. Starting with version 1.0.0 and build 1.');
       }
 
       function formatBytes(bytes) {
@@ -784,6 +947,7 @@ export class AdminController {
       async function loadProjects() {
         const data = await api('/api/v1/admin/projects');
         renderProjects(data.items);
+        setAutofillHint('Select project, platform and file to auto-suggest version fields.');
       }
 
       async function loadVersions() {
@@ -852,8 +1016,10 @@ export class AdminController {
             body: JSON.stringify(payload),
           });
           event.target.reset();
+          latestVersionsCache.clear();
           setStatus('projectStatus', 'Project created', 'success');
           await loadProjects();
+          await autofillUploadFields();
         } catch (error) {
           setStatus('projectStatus', error.message || 'Project creation failed', 'error');
         }
@@ -874,13 +1040,53 @@ export class AdminController {
 
         try {
           await api('/api/v1/admin/projects/' + projectId, { method: 'DELETE' });
+          invalidateVersionCaches(projectId);
           setStatus('projectStatus', 'Project deleted', 'success');
           setStatus('uploadStatus', 'Project and related releases deleted', 'success');
           await loadProjects();
           await loadVersions();
+          await autofillUploadFields();
         } catch (error) {
           setStatus('projectStatus', error.message || 'Project deletion failed', 'error');
         }
+      });
+
+      projectSelect.addEventListener('change', autofillUploadFields);
+      platformSelect.addEventListener('change', autofillUploadFields);
+      releaseFileInput.addEventListener('change', async () => {
+        [versionInput, buildNumberInput, minSupportedBuildInput].forEach((input) => {
+          if (input.dataset.autofilled === 'true') {
+            input.dataset.userEdited = 'false';
+          }
+        });
+        await autofillUploadFields();
+      });
+      isRequiredSelect.addEventListener('change', () => {
+        if (minSupportedBuildInput.dataset.userEdited === 'true' && minSupportedBuildInput.value.trim() !== '') {
+          return;
+        }
+
+        const buildValue = Number(buildNumberInput.value || 0);
+        if (isRequiredSelect.value === 'true') {
+          markAutoFilled(minSupportedBuildInput, buildValue > 0 ? buildValue : 0);
+          setAutofillHint('Required update enabled: min supported build matched to current build.');
+          return;
+        }
+
+        markAutoFilled(minSupportedBuildInput, 0);
+        setAutofillHint('Optional update enabled: min supported build reset to 0.');
+      });
+      buildNumberInput.addEventListener('input', () => {
+        if (isRequiredSelect.value !== 'true') {
+          return;
+        }
+
+        if (minSupportedBuildInput.dataset.userEdited === 'true' && minSupportedBuildInput.value.trim() !== '') {
+          return;
+        }
+
+        const buildValue = Number(buildNumberInput.value || 0);
+        markAutoFilled(minSupportedBuildInput, buildValue > 0 ? buildValue : 0);
       });
 
       document.getElementById('uploadForm').addEventListener('submit', async (event) => {
@@ -1012,6 +1218,11 @@ export class AdminController {
           }
 
           event.target.reset();
+          invalidateVersionCaches(payload.project_id);
+          [versionInput, buildNumberInput, minSupportedBuildInput].forEach((input) => {
+            input.dataset.userEdited = 'false';
+            input.dataset.autofilled = 'false';
+          });
           setUploadProgressState({
             percent: 100,
             transferred: formatBytes(selectedFile.size) + ' / ' + formatBytes(selectedFile.size),
@@ -1022,6 +1233,7 @@ export class AdminController {
           });
           setStatus('uploadStatus', 'Version uploaded', 'success');
           await loadVersions();
+          await autofillUploadFields();
         } catch (error) {
           uploadProgressTrack.classList.remove('processing');
           setStatus('uploadStatus', error.message || 'Upload failed', 'error');
@@ -1043,8 +1255,10 @@ export class AdminController {
         try {
           if (activateId) {
             await api('/api/v1/admin/versions/' + activateId + '/activate', { method: 'PATCH' });
+            invalidateVersionCaches(projectSelect.value);
             setStatus('uploadStatus', 'Release activated', 'success');
             await loadVersions();
+            await autofillUploadFields();
           }
 
           if (deleteId) {
@@ -1053,8 +1267,10 @@ export class AdminController {
               return;
             }
             await api('/api/v1/admin/versions/' + deleteId, { method: 'DELETE' });
+            invalidateVersionCaches(projectSelect.value);
             setStatus('uploadStatus', 'Release deleted', 'success');
             await loadVersions();
+            await autofillUploadFields();
           }
         } catch (error) {
           setStatus('uploadStatus', error.message || 'Action failed', 'error');
