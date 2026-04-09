@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { MulterError } from 'multer';
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
@@ -17,10 +18,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const response = context.getResponse<Response>();
     const request = context.getRequest<Request>();
 
-    const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+    const status = this.getStatus(exception);
 
     const exceptionResponse =
       exception instanceof HttpException ? exception.getResponse() : null;
@@ -53,6 +51,18 @@ export class ApiExceptionFilter implements ExceptionFilter {
   }
 
   private getMessage(exceptionResponse: unknown, exception: unknown): string {
+    if (exception instanceof MulterError && exception.code === 'LIMIT_FILE_SIZE') {
+      return 'Payload too large';
+    }
+
+    if (this.isPayloadTooLargeError(exception)) {
+      return 'Payload too large';
+    }
+
+    if (exception instanceof Error && exception.message === 'Request aborted') {
+      return 'Upload was interrupted before completion';
+    }
+
     if (typeof exceptionResponse === 'string') {
       return exceptionResponse;
     }
@@ -78,5 +88,43 @@ export class ApiExceptionFilter implements ExceptionFilter {
     }
 
     return 'Internal server error';
+  }
+
+  private getStatus(exception: unknown): number {
+    if (exception instanceof HttpException) {
+      return exception.getStatus();
+    }
+
+    if (exception instanceof MulterError && exception.code === 'LIMIT_FILE_SIZE') {
+      return HttpStatus.PAYLOAD_TOO_LARGE;
+    }
+
+    if (this.isPayloadTooLargeError(exception)) {
+      return HttpStatus.PAYLOAD_TOO_LARGE;
+    }
+
+    return HttpStatus.INTERNAL_SERVER_ERROR;
+  }
+
+  private isPayloadTooLargeError(exception: unknown): boolean {
+    if (typeof exception !== 'object' || exception === null) {
+      return false;
+    }
+
+    const payloadError = exception as {
+      status?: number;
+      statusCode?: number;
+      type?: string;
+      code?: string;
+      message?: string;
+    };
+
+    return (
+      payloadError.status === HttpStatus.PAYLOAD_TOO_LARGE ||
+      payloadError.statusCode === HttpStatus.PAYLOAD_TOO_LARGE ||
+      payloadError.type === 'entity.too.large' ||
+      payloadError.code === 'LIMIT_FILE_SIZE' ||
+      payloadError.message === 'request entity too large'
+    );
   }
 }

@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { existsSync, mkdirSync } from 'fs';
-import { unlink, writeFile } from 'fs/promises';
+import { createReadStream, existsSync, mkdirSync } from 'fs';
+import { rename, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 
 import { AppPlatform } from '../common/enums/platform.enum';
@@ -81,7 +81,11 @@ export class StorageService {
     const storageKey = join(relativeDirectory, fileName);
     const absolutePath = join(process.cwd(), 'storage', storageKey);
 
-    await writeFile(absolutePath, input.file.buffer);
+    if (input.file.path) {
+      await rename(input.file.path, absolutePath);
+    } else {
+      await writeFile(absolutePath, input.file.buffer);
+    }
 
     return {
       downloadUrl: this.buildLocalDownloadUrl(storageKey),
@@ -110,18 +114,22 @@ export class StorageService {
       .filter(Boolean)
       .join('/');
 
-    await this.withTimeout(
-      this.s3Client.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: storageKey,
-          Body: input.file.buffer,
-          ContentType: input.file.mimetype,
-        }),
-      ),
-      this.s3TimeoutMs,
-      'S3 upload timed out. Verify bucket, endpoint, and credentials.',
-    );
+    try {
+      await this.withTimeout(
+        this.s3Client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: storageKey,
+            Body: input.file.path ? createReadStream(input.file.path) : input.file.buffer,
+            ContentType: input.file.mimetype,
+          }),
+        ),
+        this.s3TimeoutMs,
+        'S3 upload timed out. Verify bucket, endpoint, and credentials.',
+      );
+    } finally {
+      await this.cleanupTemporaryUpload(input.file.path);
+    }
 
     return {
       downloadUrl: this.buildS3DownloadUrl(storageKey),
@@ -194,5 +202,17 @@ export class StorageService {
     const bucket = this.configService.get<string>('S3_BUCKET', '');
 
     return `${endpoint}/${bucket}/${storageKey}`;
+  }
+
+  private async cleanupTemporaryUpload(filePath: string | undefined): Promise<void> {
+    if (!filePath) {
+      return;
+    }
+
+    try {
+      await unlink(filePath);
+    } catch {
+      return;
+    }
   }
 }

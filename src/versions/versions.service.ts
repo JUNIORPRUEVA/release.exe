@@ -57,22 +57,13 @@ export class VersionsService {
     });
 
     try {
-      return await this.dataSource.transaction(async (manager) => {
-        const shouldActivate = payload.is_active ?? !(await manager.exists(AppVersion, {
+      const { savedVersion, replacedStorageKeys } = await this.dataSource.transaction(async (manager) => {
+        const existingVersions = await manager.find(AppVersion, {
           where: {
             projectId: project.id,
             platform: payload.platform,
-            isActive: true,
           },
-        }));
-
-        if (shouldActivate) {
-          await manager.update(
-            AppVersion,
-            { projectId: project.id, platform: payload.platform, isActive: true },
-            { isActive: false },
-          );
-        }
+        });
 
         const version = manager.create(AppVersion, {
           projectId: project.id,
@@ -84,12 +75,33 @@ export class VersionsService {
           fileSize: storedFile.fileSize,
           releaseNotes: payload.release_notes ?? '',
           isRequired: payload.is_required,
-          isActive: shouldActivate,
+          isActive: true,
           minSupportedBuild: payload.min_supported_build ?? 0,
         });
 
-        return manager.save(version);
+        const savedVersion = await manager.save(version);
+
+        if (existingVersions.length > 0) {
+          await manager.delete(AppVersion, {
+            projectId: project.id,
+            platform: payload.platform,
+            id: existingVersions.map((item) => item.id) as never,
+          });
+        }
+
+        return {
+          savedVersion,
+          replacedStorageKeys: existingVersions.map((item) => item.storageKey),
+        };
       });
+
+      await Promise.all(
+        replacedStorageKeys.map(async (storageKey) => {
+          await this.storageService.deleteFile(storageKey);
+        }),
+      );
+
+      return savedVersion;
     } catch (error) {
       await this.storageService.deleteFile(storedFile.storageKey);
       throw error;

@@ -23,7 +23,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
-RUN mkdir -p storage/uploads && chown -R app:app /app
+RUN mkdir -p storage/uploads storage/tmp && chown -R app:app /app
 
 USER app
 

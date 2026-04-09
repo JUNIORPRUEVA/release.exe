@@ -13,7 +13,6 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
 import { Response } from 'express';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -72,14 +71,7 @@ export class AdminController {
 
   @Post('api/v1/admin/upload-version')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: memoryStorage(),
-      limits: {
-        fileSize: 1024 * 1024 * 1024,
-      },
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file'))
   async uploadVersion(@UploadedFile() file: Express.Multer.File, @Body() payload: UploadVersionDto) {
     const version = await this.versionsService.uploadVersion(file, payload);
 
@@ -334,6 +326,7 @@ export class AdminController {
         <div class="stack hidden" id="dashboard">
           <section class="panel">
             <h2>Upload Version</h2>
+            <div class="muted" style="margin-bottom: 12px;">Each new upload replaces the previous version for the same project and platform.</div>
             <form id="uploadForm" class="form-grid">
               <label>Project<select name="project_id" id="projectSelect" required></select></label>
               <div class="split">
