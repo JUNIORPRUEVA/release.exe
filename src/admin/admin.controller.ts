@@ -870,7 +870,7 @@ export class AdminController {
           setStatus('uploadStatus', 'Uploading release...', '');
         }
         const formData = new FormData(event.target);
-        const uploadStartedAt = Date.now();
+        let uploadStartedAt = Date.now();
 
         submitButton.disabled = true;
         submitButton.textContent = 'Uploading...';
