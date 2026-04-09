@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import { Repository } from 'typeorm';
 
+import { StorageService } from '../storage/storage.service';
+import { AppVersion } from '../versions/version.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { Project } from './project.entity';
 
@@ -11,6 +13,9 @@ export class ProjectsService {
   constructor(
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
+    @InjectRepository(AppVersion)
+    private readonly versionRepository: Repository<AppVersion>,
+    private readonly storageService: StorageService,
   ) {}
 
   async createProject(payload: CreateProjectDto): Promise<Project> {
@@ -45,6 +50,25 @@ export class ProjectsService {
 
   async findByApiKey(apiKey: string): Promise<Project | null> {
     return this.projectRepository.findOne({ where: { apiKey } });
+  }
+
+  async deleteProject(id: string): Promise<void> {
+    const project = await this.findById(id);
+    const versions = await this.versionRepository.find({
+      where: { projectId: project.id },
+      select: {
+        id: true,
+        storageKey: true,
+      },
+    });
+
+    await this.projectRepository.delete({ id: project.id });
+
+    await Promise.all(
+      versions.map(async (version) => {
+        await this.storageService.deleteFile(version.storageKey);
+      }),
+    );
   }
 
   private async generateUniqueApiKey(): Promise<string> {

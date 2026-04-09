@@ -74,6 +74,17 @@ export class AdminController {
     };
   }
 
+  @Delete('api/v1/admin/projects/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteProject(@Param('id') id: string) {
+    await this.projectsService.deleteProject(id);
+
+    return {
+      deleted: true,
+      id,
+    };
+  }
+
   @Post('api/v1/admin/upload-version')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('file'))
@@ -359,6 +370,12 @@ export class AdminController {
         overflow-wrap: anywhere;
         margin-top: 8px;
         font-size: 12px;
+      }
+      .project-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
       }
       .version-row {
         display: grid;
@@ -745,7 +762,7 @@ export class AdminController {
         projectSelect.innerHTML = items.map(projectOption).join('');
         projectFilter.innerHTML = '<option value="">All projects</option>' + items.map(projectOption).join('');
         projectList.innerHTML = items.map((project) =>
-          '<div class="project-card"><strong>' + project.name + '</strong><div class="muted">Created ' + new Date(project.created_at).toLocaleString() + '</div><code>' + project.api_key + '</code></div>'
+          '<div class="project-card"><strong>' + project.name + '</strong><div class="muted">Created ' + new Date(project.created_at).toLocaleString() + '</div><code>' + project.api_key + '</code><div class="project-actions"><button type="button" class="secondary" data-delete-project="' + project.id + '">Delete project</button></div></div>'
         ).join('') || '<div class="muted">No projects yet.</div>';
       }
 
@@ -839,6 +856,30 @@ export class AdminController {
           await loadProjects();
         } catch (error) {
           setStatus('projectStatus', error.message || 'Project creation failed', 'error');
+        }
+      });
+
+      projectList.addEventListener('click', async (event) => {
+        const deleteProjectButton = event.target.closest('[data-delete-project]');
+        const projectId = deleteProjectButton ? deleteProjectButton.getAttribute('data-delete-project') : null;
+
+        if (!projectId) {
+          return;
+        }
+
+        const confirmed = window.confirm('Delete this project and all its releases permanently?');
+        if (!confirmed) {
+          return;
+        }
+
+        try {
+          await api('/api/v1/admin/projects/' + projectId, { method: 'DELETE' });
+          setStatus('projectStatus', 'Project deleted', 'success');
+          setStatus('uploadStatus', 'Project and related releases deleted', 'success');
+          await loadProjects();
+          await loadVersions();
+        } catch (error) {
+          setStatus('projectStatus', error.message || 'Project deletion failed', 'error');
         }
       });
 
