@@ -207,8 +207,10 @@ export class AdminController {
         --text: #2c2418;
         --muted: #6f6658;
         --accent: #1f6f78;
+        --accent-soft: #d8ecee;
         --accent-2: #c44536;
         --success: #1b6b46;
+        --shadow: 0 14px 32px rgba(44, 36, 24, 0.08);
       }
       * { box-sizing: border-box; }
       body {
@@ -252,15 +254,34 @@ export class AdminController {
         border: 1px solid var(--border);
         border-radius: 18px;
         padding: 18px;
-        box-shadow: 0 14px 32px rgba(44, 36, 24, 0.08);
+        box-shadow: var(--shadow);
       }
       .stack {
         display: grid;
         gap: 18px;
       }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(220, 207, 184, 0.8);
+        color: var(--accent);
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
       h2 {
         margin: 0 0 12px;
         font-size: 18px;
+      }
+      .panel-header {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 14px;
       }
       label {
         display: grid;
@@ -299,6 +320,17 @@ export class AdminController {
         color: #fff;
         background: var(--accent);
         cursor: pointer;
+        transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 18px rgba(31, 111, 120, 0.16);
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+        transform: none;
+        box-shadow: none;
       }
       button.secondary {
         background: var(--accent-2);
@@ -307,6 +339,12 @@ export class AdminController {
         background: transparent;
         color: var(--accent);
         border: 1px solid var(--border);
+      }
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
       }
       .muted {
         color: var(--muted);
@@ -362,6 +400,71 @@ export class AdminController {
         padding: 14px;
         background: rgba(255, 255, 255, 0.7);
       }
+      .login-panel {
+        position: relative;
+        overflow: hidden;
+      }
+      .login-panel::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(31, 111, 120, 0.06), rgba(196, 69, 54, 0.03));
+        pointer-events: none;
+      }
+      .login-panel > * {
+        position: relative;
+      }
+      .session-panel {
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+        border-radius: 16px;
+        border: 1px solid rgba(31, 111, 120, 0.18);
+        background: linear-gradient(180deg, rgba(216, 236, 238, 0.62), rgba(255, 255, 255, 0.78));
+      }
+      .session-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .session-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.86);
+        color: var(--text);
+        border: 1px solid rgba(31, 111, 120, 0.12);
+        font-size: 12px;
+      }
+      .token-box {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(44, 36, 24, 0.96);
+        box-shadow: inset 0 0 0 1px rgba(220, 207, 184, 0.08);
+      }
+      .token-box label {
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 12px;
+      }
+      .token-value {
+        width: 100%;
+        min-height: 102px;
+        resize: none;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: #f9f7f1;
+        font-family: "Consolas", "SFMono-Regular", monospace;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .token-value:focus {
+        outline: none;
+      }
       .project-card strong, .version-row strong {
         display: block;
       }
@@ -394,6 +497,21 @@ export class AdminController {
       @media (max-width: 900px) {
         .grid { grid-template-columns: 1fr; }
       }
+      @media (max-width: 640px) {
+        .shell {
+          padding: 16px;
+        }
+        .hero {
+          align-items: start;
+          flex-direction: column;
+        }
+        .split {
+          grid-template-columns: 1fr;
+        }
+        .button-row {
+          display: grid;
+        }
+      }
     </style>
   </head>
   <body>
@@ -407,14 +525,37 @@ export class AdminController {
       </div>
       <div class="grid">
         <div class="stack">
-          <section class="panel" id="loginPanel">
-            <h2>Admin Login</h2>
+          <section class="panel login-panel" id="loginPanel">
+            <div class="eyebrow">Secure access</div>
+            <div class="panel-header">
+              <h2>Admin Login</h2>
+              <div class="muted">Accede al panel y copia el token de sesi&oacute;n cuando lo necesites para pruebas o integraciones.</div>
+            </div>
             <form id="loginForm" class="form-grid">
               <label>Username<input name="username" required /></label>
               <label>Password<input type="password" name="password" required /></label>
               <button type="submit">Get Access Token</button>
               <div id="loginStatus" class="status"></div>
             </form>
+          </section>
+          <section class="panel hidden" id="sessionPanel">
+            <div class="panel-header">
+              <div class="eyebrow">Session token</div>
+              <h2>Current Access Token</h2>
+              <div class="muted">El token sigue guardado localmente. Desde aqu&iacute; puedes revisarlo y copiarlo en un clic.</div>
+            </div>
+            <div class="session-panel">
+              <div class="session-meta" id="sessionMeta"></div>
+              <div class="token-box">
+                <label for="tokenPreview">Bearer token</label>
+                <textarea id="tokenPreview" class="token-value" readonly spellcheck="false"></textarea>
+              </div>
+              <div class="button-row">
+                <button type="button" id="copyTokenButton">Copy Token</button>
+                <button type="button" class="ghost" id="selectTokenButton">Select Token</button>
+                <div id="copyTokenStatus" class="status"></div>
+              </div>
+            </div>
           </section>
           <section class="panel hidden" id="projectPanel">
             <h2>Create Project</h2>
@@ -483,9 +624,15 @@ export class AdminController {
     <script>
       const tokenKey = 'version-admin-token';
       const loginPanel = document.getElementById('loginPanel');
+      const sessionPanel = document.getElementById('sessionPanel');
       const projectPanel = document.getElementById('projectPanel');
       const dashboard = document.getElementById('dashboard');
       const logoutButton = document.getElementById('logoutButton');
+      const copyTokenButton = document.getElementById('copyTokenButton');
+      const selectTokenButton = document.getElementById('selectTokenButton');
+      const copyTokenStatus = document.getElementById('copyTokenStatus');
+      const tokenPreview = document.getElementById('tokenPreview');
+      const sessionMeta = document.getElementById('sessionMeta');
       const projectSelect = document.getElementById('projectSelect');
       const platformSelect = document.getElementById('platformSelect');
       const projectFilter = document.getElementById('projectFilter');
@@ -508,6 +655,7 @@ export class AdminController {
       const uploadEta = document.getElementById('uploadEta');
       const directUploadEnabled = ${directUploadEnabled ? 'true' : 'false'};
       const latestVersionsCache = new Map();
+      const sessionMetaKey = 'version-admin-session-meta';
 
       [versionInput, buildNumberInput, minSupportedBuildInput].forEach((input) => {
         input.addEventListener('input', () => {
@@ -517,6 +665,81 @@ export class AdminController {
 
       function getToken() {
         return localStorage.getItem(tokenKey);
+      }
+
+      function getSessionMeta() {
+        const raw = localStorage.getItem(sessionMetaKey);
+        if (!raw) {
+          return null;
+        }
+
+        try {
+          return JSON.parse(raw);
+        } catch (error) {
+          localStorage.removeItem(sessionMetaKey);
+          return null;
+        }
+      }
+
+      function persistSessionMeta(meta) {
+        localStorage.setItem(sessionMetaKey, JSON.stringify(meta));
+      }
+
+      function clearSessionMeta() {
+        localStorage.removeItem(sessionMetaKey);
+      }
+
+      function renderSessionMeta(meta) {
+        const items = [];
+
+        if (meta && meta.username) {
+          items.push('<div class="session-badge">User: ' + meta.username + '</div>');
+        }
+
+        if (meta && meta.expires_in) {
+          items.push('<div class="session-badge">Expires: ' + meta.expires_in + '</div>');
+        }
+
+        items.push('<div class="session-badge">Storage: local browser session</div>');
+        sessionMeta.innerHTML = items.join('');
+      }
+
+      function refreshTokenPanel() {
+        const token = getToken() || '';
+        tokenPreview.value = token ? 'Bearer ' + token : '';
+        copyTokenButton.disabled = !token;
+        selectTokenButton.disabled = !token;
+        sessionPanel.classList.toggle('hidden', !token);
+
+        if (token) {
+          renderSessionMeta(getSessionMeta());
+          return;
+        }
+
+        sessionMeta.innerHTML = '';
+        setStatus('copyTokenStatus', '', '');
+      }
+
+      async function copyTokenToClipboard() {
+        const token = tokenPreview.value.trim();
+        if (!token) {
+          setStatus('copyTokenStatus', 'No token available to copy', 'error');
+          return;
+        }
+
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(token);
+          return;
+        }
+
+        tokenPreview.focus();
+        tokenPreview.select();
+        const copied = document.execCommand('copy');
+        tokenPreview.setSelectionRange(0, 0);
+
+        if (!copied) {
+          throw new Error('Clipboard access is not available in this browser');
+        }
       }
 
       function setStatus(id, message, type) {
@@ -915,9 +1138,11 @@ export class AdminController {
 
       function showDashboard(isAuthenticated) {
         loginPanel.classList.toggle('hidden', isAuthenticated);
+        sessionPanel.classList.toggle('hidden', !isAuthenticated);
         projectPanel.classList.toggle('hidden', !isAuthenticated);
         dashboard.classList.toggle('hidden', !isAuthenticated);
         logoutButton.classList.toggle('hidden', !isAuthenticated);
+        refreshTokenPanel();
       }
 
       function projectOption(project) {
@@ -978,10 +1203,30 @@ export class AdminController {
           await loadVersions();
         } catch (error) {
           localStorage.removeItem(tokenKey);
+          clearSessionMeta();
           showDashboard(false);
           setStatus('loginStatus', error.message || 'Session expired', 'error');
         }
       }
+
+      copyTokenButton.addEventListener('click', async () => {
+        try {
+          await copyTokenToClipboard();
+          setStatus('copyTokenStatus', 'Token copied to clipboard', 'success');
+        } catch (error) {
+          setStatus('copyTokenStatus', error.message || 'Unable to copy token', 'error');
+        }
+      });
+
+      selectTokenButton.addEventListener('click', () => {
+        if (!tokenPreview.value) {
+          return;
+        }
+
+        tokenPreview.focus();
+        tokenPreview.select();
+        setStatus('copyTokenStatus', 'Token selected', 'success');
+      });
 
       document.getElementById('loginForm').addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -1003,6 +1248,10 @@ export class AdminController {
           });
 
           localStorage.setItem(tokenKey, data.token);
+          persistSessionMeta({
+            username: data.username || '',
+            expires_in: data.expires_in || '',
+          });
           showDashboard(true);
           setStatus('loginStatus', 'Authenticated', 'success');
           await loadProjects();
@@ -1295,7 +1544,9 @@ export class AdminController {
 
       logoutButton.addEventListener('click', () => {
         localStorage.removeItem(tokenKey);
+        clearSessionMeta();
         showDashboard(false);
+        setStatus('loginStatus', 'Logged out', '');
       });
 
       resetUploadProgress();
