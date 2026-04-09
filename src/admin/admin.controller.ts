@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -12,19 +13,23 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateProjectDto } from '../projects/dto/create-project.dto';
 import { ProjectsService } from '../projects/projects.service';
+import { CompleteUploadVersionDto } from '../versions/dto/complete-upload-version.dto';
 import { ListVersionsQueryDto } from '../versions/dto/list-versions-query.dto';
+import { PresignUploadVersionDto } from '../versions/dto/presign-upload-version.dto';
 import { UploadVersionDto } from '../versions/dto/upload-version.dto';
 import { VersionsService } from '../versions/versions.service';
 
 @Controller()
 export class AdminController {
   constructor(
+    private readonly configService: ConfigService,
     private readonly projectsService: ProjectsService,
     private readonly versionsService: VersionsService,
   ) {}
@@ -91,6 +96,43 @@ export class AdminController {
     };
   }
 
+  @Post('api/v1/admin/upload-version/presign')
+  @UseGuards(JwtAuthGuard)
+  async presignUploadVersion(@Body() payload: PresignUploadVersionDto) {
+    const directUpload = await this.versionsService.createDirectUploadTarget(payload);
+
+    return {
+      direct_upload: true,
+      upload_url: directUpload.uploadUrl,
+      method: directUpload.method,
+      headers: directUpload.headers,
+      storage_key: directUpload.storageKey,
+      download_url: directUpload.downloadUrl,
+      expires_in_seconds: directUpload.expiresInSeconds,
+    };
+  }
+
+  @Post('api/v1/admin/upload-version/complete')
+  @UseGuards(JwtAuthGuard)
+  async completeUploadVersion(@Body() payload: CompleteUploadVersionDto) {
+    const version = await this.versionsService.completeDirectUpload(payload);
+
+    return {
+      id: version.id,
+      project_id: version.projectId,
+      platform: version.platform,
+      version: version.version,
+      build_number: version.buildNumber,
+      download_url: version.downloadUrl,
+      file_size: version.fileSize,
+      release_notes: version.releaseNotes,
+      is_required: version.isRequired,
+      is_active: version.isActive,
+      min_supported_build: version.minSupportedBuild,
+      created_at: version.createdAt,
+    };
+  }
+
   @Get('api/v1/admin/versions')
   @UseGuards(JwtAuthGuard)
   async listVersions(@Query() query: ListVersionsQueryDto) {
@@ -138,6 +180,8 @@ export class AdminController {
   }
 
   private renderPage(): string {
+    const directUploadEnabled = this.versionsService.isDirectUploadEnabled();
+
     return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -436,6 +480,7 @@ export class AdminController {
       const uploadTransferred = document.getElementById('uploadTransferred');
       const uploadSpeed = document.getElementById('uploadSpeed');
       const uploadEta = document.getElementById('uploadEta');
+      const directUploadEnabled = ${directUploadEnabled ? 'true' : 'false'};
 
       function getToken() {
         return localStorage.getItem(tokenKey);
@@ -621,6 +666,52 @@ export class AdminController {
         });
       }
 
+      function uploadBinaryWithProgress(url, file, options = {}) {
+        const { method = 'PUT', headers = {}, timeoutMs = 0, onProgress } = options;
+
+        return new Promise((resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.open(method, url, true);
+
+          Object.entries(headers).forEach(([key, value]) => {
+            request.setRequestHeader(key, value);
+          });
+
+          if (timeoutMs > 0) {
+            request.timeout = timeoutMs;
+          }
+
+          request.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable && onProgress) {
+              onProgress({ loaded: event.loaded, total: event.total });
+            }
+          });
+
+          request.addEventListener('load', () => {
+            if (request.status >= 200 && request.status < 300) {
+              resolve({ status: request.status });
+              return;
+            }
+
+            reject(new Error('Direct storage upload failed with HTTP ' + request.status + ' ' + request.statusText));
+          });
+
+          request.addEventListener('error', () => {
+            reject(new Error('Network error while uploading directly to storage. Verify bucket CORS and connectivity.'));
+          });
+
+          request.addEventListener('abort', () => {
+            reject(new Error('Direct storage upload was canceled before completion'));
+          });
+
+          request.addEventListener('timeout', () => {
+            reject(new Error('Direct storage upload timed out'));
+          });
+
+          request.send(file);
+        });
+      }
+
       async function api(path, options = {}) {
         const { timeoutMs = 30000, headers = {}, ...restOptions } = options;
         const response = await fetchWithTimeout(path, {
@@ -793,25 +884,92 @@ export class AdminController {
         });
 
         try {
-          await uploadWithProgress('/api/v1/admin/upload-version', formData, {
-            timeoutMs: selectedFile.size > 25 * 1024 * 1024 ? 0 : 180000,
-            onProgress: ({ loaded, total }) => {
-              const elapsedSeconds = Math.max((Date.now() - uploadStartedAt) / 1000, 0.25);
-              const speedBytesPerSecond = loaded / elapsedSeconds;
-              const percent = total > 0 ? (loaded / total) * 100 : 0;
-              const remainingSeconds = speedBytesPerSecond > 0 ? (total - loaded) / speedBytesPerSecond : 0;
-              const uploadCompleted = total > 0 && loaded >= total;
+          const payload = {
+            project_id: event.target.elements.namedItem('project_id').value,
+            platform: event.target.elements.namedItem('platform').value,
+            version: event.target.elements.namedItem('version').value,
+            build_number: Number(buildNumber),
+            min_supported_build: Number(minSupportedBuild),
+            release_notes: event.target.elements.namedItem('release_notes').value || '',
+            is_required: event.target.elements.namedItem('is_required').value,
+            is_active: event.target.elements.namedItem('is_active').value,
+          };
 
-              setUploadProgressState({
-                percent,
-                transferred: formatBytes(loaded) + ' / ' + formatBytes(total),
-                speed: formatBytes(speedBytesPerSecond) + '/s',
-                eta: uploadCompleted ? 'ETA 0s' : formatDuration(remainingSeconds),
-                phase: uploadCompleted ? 'Upload sent. Saving and processing on server...' : 'Uploading file to server...',
-                processing: uploadCompleted,
-              });
-            },
-          });
+          const updateProgress = ({ loaded, total, phase, processing = false }) => {
+            const elapsedSeconds = Math.max((Date.now() - uploadStartedAt) / 1000, 0.25);
+            const speedBytesPerSecond = loaded / elapsedSeconds;
+            const percent = total > 0 ? (loaded / total) * 100 : 0;
+            const remainingSeconds = speedBytesPerSecond > 0 ? (total - loaded) / speedBytesPerSecond : 0;
+
+            setUploadProgressState({
+              percent,
+              transferred: formatBytes(loaded) + ' / ' + formatBytes(total),
+              speed: formatBytes(speedBytesPerSecond) + '/s',
+              eta: processing ? 'ETA 0s' : formatDuration(remainingSeconds),
+              phase,
+              processing,
+            });
+          };
+
+          if (directUploadEnabled) {
+            setStatus('uploadStatus', 'Preparing direct upload to cloud storage...', '');
+
+            const presign = await api('/api/v1/admin/upload-version/presign', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...payload,
+                file_name: selectedFile.name,
+                file_size: selectedFile.size,
+                content_type: selectedFile.type || 'application/octet-stream',
+              }),
+              timeoutMs: 30000,
+            });
+
+            uploadStartedAt = Date.now();
+            await uploadBinaryWithProgress(presign.upload_url, selectedFile, {
+              method: presign.method || 'PUT',
+              headers: presign.headers || { 'Content-Type': selectedFile.type || 'application/octet-stream' },
+              timeoutMs: 0,
+              onProgress: ({ loaded, total }) => {
+                const uploadCompleted = total > 0 && loaded >= total;
+                updateProgress({
+                  loaded,
+                  total,
+                  phase: uploadCompleted
+                    ? 'File uploaded to cloud storage. Finalizing release in server...'
+                    : 'Uploading directly to cloud storage...',
+                  processing: uploadCompleted,
+                });
+              },
+            });
+
+            await api('/api/v1/admin/upload-version/complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...payload,
+                storage_key: presign.storage_key,
+                file_size: selectedFile.size,
+                content_type: selectedFile.type || 'application/octet-stream',
+              }),
+              timeoutMs: 120000,
+            });
+          } else {
+            await uploadWithProgress('/api/v1/admin/upload-version', formData, {
+              timeoutMs: selectedFile.size > 25 * 1024 * 1024 ? 0 : 180000,
+              onProgress: ({ loaded, total }) => {
+                const uploadCompleted = total > 0 && loaded >= total;
+                updateProgress({
+                  loaded,
+                  total,
+                  phase: uploadCompleted ? 'Upload sent. Saving and processing on server...' : 'Uploading file to server...',
+                  processing: uploadCompleted,
+                });
+              },
+            });
+          }
+
           event.target.reset();
           setUploadProgressState({
             percent: 100,

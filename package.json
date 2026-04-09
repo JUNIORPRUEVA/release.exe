@@ -15,6 +15,7 @@
   "description": "Version management system for multiple applications",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.888.0",
+    "@aws-sdk/s3-request-presigner": "^3.1027.0",
     "@nestjs/common": "^11.1.17",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.1.17",
