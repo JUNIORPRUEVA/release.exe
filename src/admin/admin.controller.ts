@@ -947,7 +947,12 @@ export class AdminController {
       async function loadProjects() {
         const data = await api('/api/v1/admin/projects');
         renderProjects(data.items);
-        setAutofillHint('Select project, platform and file to auto-suggest version fields.');
+        if (!Array.isArray(data.items) || data.items.length === 0) {
+          setAutofillHint('Create a project first to start auto-suggesting version fields.');
+          return;
+        }
+
+        await autofillUploadFields();
       }
 
       async function loadVersions() {
