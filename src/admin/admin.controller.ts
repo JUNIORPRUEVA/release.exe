@@ -263,6 +263,44 @@ export class AdminController {
       }
       .status.success { color: var(--success); }
       .status.error { color: var(--accent-2); }
+      .upload-progress {
+        display: grid;
+        gap: 8px;
+        margin-top: 6px;
+      }
+      .progress-track {
+        position: relative;
+        overflow: hidden;
+        height: 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(220, 207, 184, 0.35);
+      }
+      .progress-bar {
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #1f6f78 0%, #2f8f99 100%);
+        transition: width 0.2s ease;
+      }
+      .progress-track.processing .progress-bar {
+        width: 100%;
+        background: linear-gradient(90deg, rgba(31, 111, 120, 0.3) 0%, #1f6f78 45%, rgba(31, 111, 120, 0.3) 100%);
+        background-size: 220px 100%;
+        animation: progress-processing 1.2s linear infinite;
+      }
+      .progress-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .progress-phase {
+        font-size: 12px;
+        color: var(--text);
+      }
       .project-card, .version-row {
         border: 1px solid var(--border);
         border-radius: 14px;
@@ -288,6 +326,10 @@ export class AdminController {
         flex-wrap: wrap;
       }
       .hidden { display: none; }
+      @keyframes progress-processing {
+        from { background-position: 220px 0; }
+        to { background-position: 0 0; }
+      }
       @media (max-width: 900px) {
         .grid { grid-template-columns: 1fr; }
       }
@@ -352,6 +394,18 @@ export class AdminController {
               </div>
               <button type="submit">Upload Release</button>
               <div id="uploadStatus" class="status"></div>
+              <div id="uploadProgress" class="upload-progress hidden">
+                <div id="uploadPhase" class="progress-phase"></div>
+                <div id="uploadProgressTrack" class="progress-track">
+                  <div id="uploadProgressBar" class="progress-bar"></div>
+                </div>
+                <div class="progress-meta">
+                  <span id="uploadPercent">0%</span>
+                  <span id="uploadTransferred">0 B / 0 B</span>
+                  <span id="uploadSpeed">0 B/s</span>
+                  <span id="uploadEta">ETA --</span>
+                </div>
+              </div>
             </form>
           </section>
           <section class="panel">
@@ -374,6 +428,14 @@ export class AdminController {
       const projectFilter = document.getElementById('projectFilter');
       const projectList = document.getElementById('projectList');
       const versionList = document.getElementById('versionList');
+      const uploadProgress = document.getElementById('uploadProgress');
+      const uploadProgressTrack = document.getElementById('uploadProgressTrack');
+      const uploadProgressBar = document.getElementById('uploadProgressBar');
+      const uploadPhase = document.getElementById('uploadPhase');
+      const uploadPercent = document.getElementById('uploadPercent');
+      const uploadTransferred = document.getElementById('uploadTransferred');
+      const uploadSpeed = document.getElementById('uploadSpeed');
+      const uploadEta = document.getElementById('uploadEta');
 
       function getToken() {
         return localStorage.getItem(tokenKey);
@@ -383,6 +445,60 @@ export class AdminController {
         const element = document.getElementById(id);
         element.textContent = message || '';
         element.className = 'status' + (type ? ' ' + type : '');
+      }
+
+      function formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) {
+          return '0 B';
+        }
+
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let value = bytes;
+        let unitIndex = 0;
+
+        while (value >= 1024 && unitIndex < units.length - 1) {
+          value /= 1024;
+          unitIndex += 1;
+        }
+
+        const digits = unitIndex === 0 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2;
+        return value.toFixed(digits) + ' ' + units[unitIndex];
+      }
+
+      function formatDuration(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+          return 'ETA 0s';
+        }
+
+        if (seconds < 60) {
+          return 'ETA ' + Math.ceil(seconds) + 's';
+        }
+
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = Math.ceil(seconds % 60);
+        return 'ETA ' + minutes + 'm ' + remainingSeconds + 's';
+      }
+
+      function resetUploadProgress() {
+        uploadProgress.classList.add('hidden');
+        uploadProgressTrack.classList.remove('processing');
+        uploadProgressBar.style.width = '0%';
+        uploadPhase.textContent = '';
+        uploadPercent.textContent = '0%';
+        uploadTransferred.textContent = '0 B / 0 B';
+        uploadSpeed.textContent = '0 B/s';
+        uploadEta.textContent = 'ETA --';
+      }
+
+      function setUploadProgressState(state) {
+        uploadProgress.classList.remove('hidden');
+        uploadProgressTrack.classList.toggle('processing', Boolean(state.processing));
+        uploadProgressBar.style.width = (state.processing ? 100 : Math.max(0, Math.min(100, state.percent || 0))) + '%';
+        uploadPhase.textContent = state.phase || '';
+        uploadPercent.textContent = Math.max(0, Math.min(100, Math.round(state.percent || 0))) + '%';
+        uploadTransferred.textContent = state.transferred || '0 B / 0 B';
+        uploadSpeed.textContent = state.speed || '0 B/s';
+        uploadEta.textContent = state.eta || 'ETA --';
       }
 
       async function fetchWithTimeout(path, options = {}, timeoutMs = 30000) {
@@ -438,6 +554,71 @@ export class AdminController {
         }
 
         return new Error('HTTP ' + response.status + ' ' + response.statusText + ': ' + fallbackMessage);
+      }
+
+      function uploadWithProgress(path, formData, options = {}) {
+        const { timeoutMs = 0, onProgress } = options;
+
+        return new Promise((resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.open('POST', path, true);
+
+          const token = getToken();
+          if (token) {
+            request.setRequestHeader('Authorization', 'Bearer ' + token);
+          }
+
+          if (timeoutMs > 0) {
+            request.timeout = timeoutMs;
+          }
+
+          request.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable && onProgress) {
+              onProgress({
+                loaded: event.loaded,
+                total: event.total,
+              });
+            }
+          });
+
+          request.addEventListener('load', () => {
+            const payload = (() => {
+              const contentType = request.getResponseHeader('content-type') || '';
+              const rawText = request.responseText || '';
+
+              if (contentType.includes('application/json')) {
+                try {
+                  return JSON.parse(rawText || '{}');
+                } catch {
+                  return {};
+                }
+              }
+
+              return { rawText };
+            })();
+
+            if (request.status >= 200 && request.status < 300) {
+              resolve(payload);
+              return;
+            }
+
+            reject(buildRequestError({ status: request.status, statusText: request.statusText }, payload, 'Upload failed'));
+          });
+
+          request.addEventListener('error', () => {
+            reject(new Error('Network error while uploading the file'));
+          });
+
+          request.addEventListener('abort', () => {
+            reject(new Error('The upload was canceled before completion'));
+          });
+
+          request.addEventListener('timeout', () => {
+            reject(new Error('The upload took too long. Check your network or server configuration.'));
+          });
+
+          request.send(formData);
+        });
       }
 
       async function api(path, options = {}) {
@@ -572,6 +753,7 @@ export class AdminController {
 
       document.getElementById('uploadForm').addEventListener('submit', async (event) => {
         event.preventDefault();
+        const submitButton = event.target.querySelector('button[type="submit"]');
         const buildNumberInput = event.target.elements.namedItem('build_number');
         const minSupportedBuildInput = event.target.elements.namedItem('min_supported_build');
         const fileInput = event.target.elements.namedItem('file');
@@ -580,7 +762,14 @@ export class AdminController {
         const selectedFile = fileInput && fileInput.files ? fileInput.files[0] : null;
 
         if (minSupportedBuild > buildNumber) {
+          resetUploadProgress();
           setStatus('uploadStatus', 'Min supported build cannot be greater than build number', 'error');
+          return;
+        }
+
+        if (!selectedFile) {
+          resetUploadProgress();
+          setStatus('uploadStatus', 'Select a file before uploading', 'error');
           return;
         }
 
@@ -590,18 +779,56 @@ export class AdminController {
           setStatus('uploadStatus', 'Uploading release...', '');
         }
         const formData = new FormData(event.target);
+        const uploadStartedAt = Date.now();
+
+        submitButton.disabled = true;
+        submitButton.textContent = 'Uploading...';
+        setUploadProgressState({
+          percent: 0,
+          transferred: '0 B / ' + formatBytes(selectedFile.size),
+          speed: '0 B/s',
+          eta: 'ETA --',
+          phase: 'Uploading file to server...',
+          processing: false,
+        });
 
         try {
-          await api('/api/v1/admin/upload-version', {
-            method: 'POST',
-            body: formData,
-            timeoutMs: selectedFile && selectedFile.size > 25 * 1024 * 1024 ? 0 : 180000,
+          await uploadWithProgress('/api/v1/admin/upload-version', formData, {
+            timeoutMs: selectedFile.size > 25 * 1024 * 1024 ? 0 : 180000,
+            onProgress: ({ loaded, total }) => {
+              const elapsedSeconds = Math.max((Date.now() - uploadStartedAt) / 1000, 0.25);
+              const speedBytesPerSecond = loaded / elapsedSeconds;
+              const percent = total > 0 ? (loaded / total) * 100 : 0;
+              const remainingSeconds = speedBytesPerSecond > 0 ? (total - loaded) / speedBytesPerSecond : 0;
+              const uploadCompleted = total > 0 && loaded >= total;
+
+              setUploadProgressState({
+                percent,
+                transferred: formatBytes(loaded) + ' / ' + formatBytes(total),
+                speed: formatBytes(speedBytesPerSecond) + '/s',
+                eta: uploadCompleted ? 'ETA 0s' : formatDuration(remainingSeconds),
+                phase: uploadCompleted ? 'Upload sent. Saving and processing on server...' : 'Uploading file to server...',
+                processing: uploadCompleted,
+              });
+            },
           });
           event.target.reset();
+          setUploadProgressState({
+            percent: 100,
+            transferred: formatBytes(selectedFile.size) + ' / ' + formatBytes(selectedFile.size),
+            speed: 'Complete',
+            eta: 'ETA 0s',
+            phase: 'Upload completed successfully.',
+            processing: false,
+          });
           setStatus('uploadStatus', 'Version uploaded', 'success');
           await loadVersions();
         } catch (error) {
+          uploadProgressTrack.classList.remove('processing');
           setStatus('uploadStatus', error.message || 'Upload failed', 'error');
+        } finally {
+          submitButton.disabled = false;
+          submitButton.textContent = 'Upload Release';
         }
       });
 
@@ -632,6 +859,7 @@ export class AdminController {
         showDashboard(false);
       });
 
+      resetUploadProgress();
       bootstrap();
     </script>
   </body>
