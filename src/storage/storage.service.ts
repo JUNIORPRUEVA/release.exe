@@ -91,6 +91,10 @@ export class StorageService {
     return driver === 's3' && directUploadEnabled;
   }
 
+  private getConfigValue(primaryKey: string, aliasKey: string, fallback = ''): string {
+    return this.configService.get<string>(primaryKey) ?? this.configService.get<string>(aliasKey, fallback);
+  }
+
   async createDirectUploadTarget(input: PresignUploadInput): Promise<DirectUploadTarget> {
     if (!this.isDirectUploadEnabled()) {
       throw new BadRequestException('Direct uploads are not enabled for the current storage driver');
@@ -239,7 +243,13 @@ export class StorageService {
 
     const bucket = this.configService.get<string>('S3_BUCKET');
 
-    if (!bucket || bucket.includes('REEMPLAZAR_CON_NOMBRE_REAL_DEL_BUCKET')) {
+    if (!bucket && !this.configService.get<string>('R2_BUCKET')) {
+      return;
+    }
+
+    const configuredBucket = this.getConfigValue('S3_BUCKET', 'R2_BUCKET');
+
+    if (!configuredBucket || configuredBucket.includes('REEMPLAZAR_CON_NOMBRE_REAL_DEL_BUCKET')) {
       return;
     }
 
@@ -247,7 +257,7 @@ export class StorageService {
       await this.withTimeout(
         this.s3Client.send(
           new DeleteObjectCommand({
-            Bucket: bucket,
+            Bucket: configuredBucket,
             Key: storageKey,
           }),
         ),
@@ -286,20 +296,20 @@ export class StorageService {
   }
 
   private buildS3DownloadUrl(storageKey: string): string {
-    const publicBaseUrl = this.configService.get<string>('S3_PUBLIC_BASE_URL')?.replace(/\/$/, '');
+    const publicBaseUrl = this.getConfigValue('S3_PUBLIC_BASE_URL', 'R2_PUBLIC_BASE_URL')?.replace(/\/$/, '');
 
     if (publicBaseUrl) {
       return `${publicBaseUrl}/${storageKey}`;
     }
 
-    const endpoint = this.configService.get<string>('S3_ENDPOINT', '').replace(/\/$/, '');
-    const bucket = this.configService.get<string>('S3_BUCKET', '');
+    const endpoint = this.getConfigValue('S3_ENDPOINT', 'R2_ENDPOINT').replace(/\/$/, '');
+    const bucket = this.getConfigValue('S3_BUCKET', 'R2_BUCKET');
 
     return `${endpoint}/${bucket}/${storageKey}`;
   }
 
   private getConfiguredBucket(): string {
-    const bucket = this.configService.get<string>('S3_BUCKET');
+    const bucket = this.getConfigValue('S3_BUCKET', 'R2_BUCKET');
 
     if (!bucket || bucket.includes('REEMPLAZAR_CON_NOMBRE_REAL_DEL_BUCKET')) {
       throw new InternalServerErrorException('S3 bucket is not configured correctly');
@@ -315,7 +325,7 @@ export class StorageService {
     fileName: string;
   }): string {
     return [
-      this.configService.get<string>('S3_PREFIX', 'uploads').replace(/^\/+|\/+$/g, ''),
+      this.getConfigValue('S3_PREFIX', 'R2_PREFIX', 'uploads').replace(/^\/+|\/+$/g, ''),
       slugify(input.projectName),
       input.platform,
       `${input.buildNumber}-${Date.now()}-${slugify(input.fileName)}`,

@@ -4,6 +4,10 @@ import { S3Client } from '@aws-sdk/client-s3';
 
 import { StorageService } from './storage.service';
 
+function getStorageConfig(configService: ConfigService, primaryKey: string, aliasKey: string, fallback = ''): string {
+  return configService.get<string>(primaryKey) ?? configService.get<string>(aliasKey, fallback);
+}
+
 @Module({
   providers: [
     {
@@ -15,13 +19,13 @@ import { StorageService } from './storage.service';
         }
 
         return new S3Client({
-          region: configService.get<string>('S3_REGION', 'auto'),
-          endpoint: configService.get<string>('S3_ENDPOINT'),
+          region: getStorageConfig(configService, 'S3_REGION', 'R2_REGION', 'auto'),
+          endpoint: getStorageConfig(configService, 'S3_ENDPOINT', 'R2_ENDPOINT'),
           credentials: {
-            accessKeyId: configService.get<string>('S3_ACCESS_KEY_ID', ''),
-            secretAccessKey: configService.get<string>('S3_SECRET_ACCESS_KEY', ''),
+            accessKeyId: getStorageConfig(configService, 'S3_ACCESS_KEY_ID', 'R2_ACCESS_KEY_ID'),
+            secretAccessKey: getStorageConfig(configService, 'S3_SECRET_ACCESS_KEY', 'R2_SECRET_ACCESS_KEY'),
           },
-          forcePathStyle: configService.get<string>('S3_FORCE_PATH_STYLE', 'true') === 'true',
+          forcePathStyle: getStorageConfig(configService, 'S3_FORCE_PATH_STYLE', 'R2_FORCE_PATH_STYLE', 'true') === 'true',
         });
       },
     },
