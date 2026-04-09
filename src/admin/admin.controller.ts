@@ -393,6 +393,10 @@ export class AdminController {
       }
 
       async function fetchWithTimeout(path, options = {}, timeoutMs = 30000) {
+        if (!timeoutMs || timeoutMs <= 0) {
+          return fetch(path, options);
+        }
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -588,7 +592,7 @@ export class AdminController {
         }
 
         if (selectedFile && selectedFile.size > 25 * 1024 * 1024) {
-          setStatus('uploadStatus', 'Large file detected (' + Math.ceil(selectedFile.size / (1024 * 1024)) + ' MB). If the request fails with HTTP 413, increase the upload limit in EasyPanel.', '');
+          setStatus('uploadStatus', 'Large file detected (' + Math.ceil(selectedFile.size / (1024 * 1024)) + ' MB). Upload may take several minutes. If it fails with HTTP 413, increase the upload limit in EasyPanel.', '');
         } else {
           setStatus('uploadStatus', 'Uploading release...', '');
         }
@@ -598,7 +602,7 @@ export class AdminController {
           await api('/api/v1/admin/upload-version', {
             method: 'POST',
             body: formData,
-            timeoutMs: 65000,
+            timeoutMs: selectedFile && selectedFile.size > 25 * 1024 * 1024 ? 0 : 180000,
           });
           event.target.reset();
           setStatus('uploadStatus', 'Version uploaded', 'success');
