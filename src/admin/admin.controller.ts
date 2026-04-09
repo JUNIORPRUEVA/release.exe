@@ -632,7 +632,10 @@ export class AdminController {
 
         const suggestedBuild = inferred.buildNumber || (latest ? Number(latest.build_number) + 1 : 1);
         const suggestedVersion = inferred.version || (latest ? incrementSemanticVersion(latest.version) : '1.0.0');
-        const suggestedMinBuild = isRequiredSelect.value === 'true' ? suggestedBuild : 0;
+        const latestMinSupportedBuild = latest ? Number(latest.min_supported_build || 0) : 0;
+        const suggestedMinBuild = isRequiredSelect.value === 'true'
+          ? suggestedBuild
+          : Math.max(0, Math.min(latestMinSupportedBuild, suggestedBuild));
 
         const versionFilled = maybeAutoFillInput(versionInput, suggestedVersion);
         const buildFilled = maybeAutoFillInput(buildNumberInput, suggestedBuild);
@@ -1066,7 +1069,7 @@ export class AdminController {
         });
         await autofillUploadFields();
       });
-      isRequiredSelect.addEventListener('change', () => {
+      isRequiredSelect.addEventListener('change', async () => {
         if (minSupportedBuildInput.dataset.userEdited === 'true' && minSupportedBuildInput.value.trim() !== '') {
           return;
         }
@@ -1078,8 +1081,16 @@ export class AdminController {
           return;
         }
 
-        markAutoFilled(minSupportedBuildInput, 0);
-        setAutofillHint('Optional update enabled: min supported build reset to 0.');
+        const latest = await getLatestVersionForSelection(projectSelect.value, platformSelect.value);
+        const latestMinSupportedBuild = latest ? Number(latest.min_supported_build || 0) : 0;
+        const optionalMinBuild = Math.max(0, Math.min(latestMinSupportedBuild, buildValue > 0 ? buildValue : 0));
+
+        markAutoFilled(minSupportedBuildInput, optionalMinBuild);
+        setAutofillHint(
+          optionalMinBuild > 0
+            ? 'Optional update enabled: min supported build inherited from latest active release.'
+            : 'Optional update enabled: min supported build set to 0, which means no forced update.',
+        );
       });
       buildNumberInput.addEventListener('input', () => {
         if (isRequiredSelect.value !== 'true') {
