@@ -412,7 +412,7 @@ export class AdminController {
         <div class="stack hidden" id="dashboard">
           <section class="panel">
             <h2>Upload Version</h2>
-            <div class="muted" style="margin-bottom: 12px;">Each new upload replaces the previous version for the same project and platform.</div>
+            <div class="muted" style="margin-bottom: 12px;">Each new upload replaces the current file for the same project and platform. If you upload the same build again, the stored file is replaced with the new one.</div>
             <form id="uploadForm" class="form-grid">
               <label>Project<select name="project_id" id="projectSelect" required></select></label>
               <div class="split">
@@ -994,17 +994,25 @@ export class AdminController {
       projectFilter.addEventListener('change', loadVersions);
 
       versionList.addEventListener('click', async (event) => {
-        const activateId = event.target.getAttribute('data-activate');
-        const deleteId = event.target.getAttribute('data-delete');
+        const activateButton = event.target.closest('[data-activate]');
+        const deleteButton = event.target.closest('[data-delete]');
+        const activateId = activateButton ? activateButton.getAttribute('data-activate') : null;
+        const deleteId = deleteButton ? deleteButton.getAttribute('data-delete') : null;
 
         try {
           if (activateId) {
             await api('/api/v1/admin/versions/' + activateId + '/activate', { method: 'PATCH' });
+            setStatus('uploadStatus', 'Release activated', 'success');
             await loadVersions();
           }
 
           if (deleteId) {
+            const confirmed = window.confirm('Delete this release permanently?');
+            if (!confirmed) {
+              return;
+            }
             await api('/api/v1/admin/versions/' + deleteId, { method: 'DELETE' });
+            setStatus('uploadStatus', 'Release deleted', 'success');
             await loadVersions();
           }
         } catch (error) {

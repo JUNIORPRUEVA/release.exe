@@ -212,17 +212,6 @@ export class VersionsService {
     }
 
     const project = await this.projectsService.findById(payload.project_id);
-    const duplicate = await this.versionRepository.findOne({
-      where: {
-        projectId: project.id,
-        platform: payload.platform,
-        buildNumber: payload.build_number,
-      },
-    });
-
-    if (duplicate) {
-      throw new ConflictException('Build number already exists for this project and platform');
-    }
 
     return {
       id: project.id,
@@ -243,6 +232,12 @@ export class VersionsService {
         },
       });
 
+      if (existingVersions.length > 0) {
+        await manager.delete(AppVersion, {
+          id: In(existingVersions.map((item) => item.id)),
+        });
+      }
+
       const version = manager.create(AppVersion, {
         projectId,
         platform: payload.platform,
@@ -258,12 +253,6 @@ export class VersionsService {
       });
 
       const savedVersion = await manager.save(version);
-
-      if (existingVersions.length > 0) {
-        await manager.delete(AppVersion, {
-          id: In(existingVersions.map((item) => item.id)),
-        });
-      }
 
       return {
         savedVersion,
