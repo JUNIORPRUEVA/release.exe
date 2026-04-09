@@ -1,4 +1,5 @@
 import {
+  GatewayTimeoutException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -29,6 +30,8 @@ type StorageDriver = 'local' | 's3';
 
 @Injectable()
 export class StorageService {
+  private readonly s3TimeoutMs = 20_000;
+
   constructor(
     private readonly configService: ConfigService,
     @Inject('S3_CLIENT') private readonly s3Client: S3Client | null,
@@ -94,8 +97,8 @@ export class StorageService {
 
     const bucket = this.configService.get<string>('S3_BUCKET');
 
-    if (!bucket) {
-      throw new InternalServerErrorException('S3 bucket is not configured');
+    if (!bucket || bucket.includes('REEMPLAZAR_CON_NOMBRE_REAL_DEL_BUCKET')) {
+      throw new InternalServerErrorException('S3 bucket is not configured correctly');
     }
 
     const storageKey = [
@@ -107,13 +110,17 @@ export class StorageService {
       .filter(Boolean)
       .join('/');
 
-    await this.s3Client.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: storageKey,
-        Body: input.file.buffer,
-        ContentType: input.file.mimetype,
-      }),
+    await this.withTimeout(
+      this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: storageKey,
+          Body: input.file.buffer,
+          ContentType: input.file.mimetype,
+        }),
+      ),
+      this.s3TimeoutMs,
+      'S3 upload timed out. Verify bucket, endpoint, and credentials.',
     );
 
     return {
@@ -130,19 +137,42 @@ export class StorageService {
 
     const bucket = this.configService.get<string>('S3_BUCKET');
 
-    if (!bucket) {
+    if (!bucket || bucket.includes('REEMPLAZAR_CON_NOMBRE_REAL_DEL_BUCKET')) {
       return;
     }
 
     try {
-      await this.s3Client.send(
-        new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: storageKey,
-        }),
+      await this.withTimeout(
+        this.s3Client.send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: storageKey,
+          }),
+        ),
+        this.s3TimeoutMs,
+        'S3 delete timed out',
       );
     } catch {
       return;
+    }
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new GatewayTimeoutException(message));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 

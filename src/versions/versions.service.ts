@@ -29,6 +29,13 @@ export class VersionsService {
       throw new BadRequestException('Version file is required');
     }
 
+    if (
+      payload.min_supported_build != null &&
+      payload.min_supported_build > payload.build_number
+    ) {
+      throw new BadRequestException('Min supported build cannot be greater than build number');
+    }
+
     const project = await this.projectsService.findById(payload.project_id);
     const duplicate = await this.versionRepository.findOne({
       where: {

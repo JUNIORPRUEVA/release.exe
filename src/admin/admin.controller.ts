@@ -392,18 +392,70 @@ export class AdminController {
         element.className = 'status' + (type ? ' ' + type : '');
       }
 
+      async function fetchWithTimeout(path, options = {}, timeoutMs = 30000) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+          return await fetch(path, {
+            ...options,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (error && error.name === 'AbortError') {
+            throw new Error('The request took too long. Check storage configuration and server logs.');
+          }
+
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+
+      async function parseResponse(response) {
+        const contentType = response.headers.get('content-type') || '';
+
+        if (contentType.includes('application/json')) {
+          return response.json().catch(() => ({}));
+        }
+
+        const text = await response.text().catch(() => '');
+        return { rawText: text };
+      }
+
+      function buildRequestError(response, payload, fallbackMessage) {
+        const apiMessage = payload && payload.error && payload.error.message;
+        if (apiMessage) {
+          return new Error(apiMessage);
+        }
+
+        const rawText = payload && payload.rawText ? String(payload.rawText).replace(/\s+/g, ' ').trim() : '';
+        const shortText = rawText.slice(0, 180);
+
+        if (response.status === 413) {
+          return new Error('The file is too large for the server or proxy. Increase the upload limit in EasyPanel or upload a smaller file.');
+        }
+
+        if (shortText) {
+          return new Error('HTTP ' + response.status + ' ' + response.statusText + ': ' + shortText);
+        }
+
+        return new Error('HTTP ' + response.status + ' ' + response.statusText + ': ' + fallbackMessage);
+      }
+
       async function api(path, options = {}) {
-        const response = await fetch(path, {
-          ...options,
+        const { timeoutMs = 30000, headers = {}, ...restOptions } = options;
+        const response = await fetchWithTimeout(path, {
+          ...restOptions,
           headers: {
-            ...(options.headers || {}),
+            ...headers,
             Authorization: 'Bearer ' + getToken(),
           },
-        });
-        const data = await response.json().catch(() => ({}));
+        }, timeoutMs);
+        const data = await parseResponse(response);
 
         if (!response.ok) {
-          throw new Error(data?.error?.message || 'Request failed');
+          throw buildRequestError(response, data, 'Request failed');
         }
 
         return data;
@@ -480,14 +532,14 @@ export class AdminController {
         const payload = Object.fromEntries(formData.entries());
 
         try {
-          const data = await fetch('/api/v1/admin/auth/login', {
+          const data = await fetchWithTimeout('/api/v1/admin/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
-          }).then(async (response) => {
-            const json = await response.json().catch(() => ({}));
+          }, 15000).then(async (response) => {
+            const json = await parseResponse(response);
             if (!response.ok) {
-              throw new Error(json?.error?.message || 'Login failed');
+              throw buildRequestError(response, json, 'Login failed');
             }
             return json;
           });
@@ -523,13 +575,30 @@ export class AdminController {
 
       document.getElementById('uploadForm').addEventListener('submit', async (event) => {
         event.preventDefault();
-        setStatus('uploadStatus', 'Uploading release...', '');
+        const buildNumberInput = event.target.elements.namedItem('build_number');
+        const minSupportedBuildInput = event.target.elements.namedItem('min_supported_build');
+        const fileInput = event.target.elements.namedItem('file');
+        const buildNumber = Number((buildNumberInput && buildNumberInput.value) || 0);
+        const minSupportedBuild = Number((minSupportedBuildInput && minSupportedBuildInput.value) || 0);
+        const selectedFile = fileInput && fileInput.files ? fileInput.files[0] : null;
+
+        if (minSupportedBuild > buildNumber) {
+          setStatus('uploadStatus', 'Min supported build cannot be greater than build number', 'error');
+          return;
+        }
+
+        if (selectedFile && selectedFile.size > 25 * 1024 * 1024) {
+          setStatus('uploadStatus', 'Large file detected (' + Math.ceil(selectedFile.size / (1024 * 1024)) + ' MB). If the request fails with HTTP 413, increase the upload limit in EasyPanel.', '');
+        } else {
+          setStatus('uploadStatus', 'Uploading release...', '');
+        }
         const formData = new FormData(event.target);
 
         try {
           await api('/api/v1/admin/upload-version', {
             method: 'POST',
             body: formData,
+            timeoutMs: 65000,
           });
           event.target.reset();
           setStatus('uploadStatus', 'Version uploaded', 'success');
